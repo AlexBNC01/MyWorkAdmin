@@ -1,30 +1,38 @@
-//newpage
-import React, { useEffect, useState } from 'react';
+// src/screens/NewPage.js
+
+import React, { useState, useEffect } from 'react';
 import {
-  View,
+  ScrollView,
   StyleSheet,
-  FlatList,
+  View,
   Text,
   Alert,
 } from 'react-native';
 import { Button, IconButton } from 'react-native-paper';
 import { useMachineContext } from '../context/MachineContext';
 
-const NewPage = ({ route, navigation }) => {
+const NewPage = ({ route }) => {
   const { name: selectedOrg } = route.params;
 
   const {
+    selectedDate,
     assignments,
-    selectedItems,
-    setSelectedItems,
     assignMachine,
-    setAssignments,
+    // ↓↓↓ Нужно будет добавить метод для "удаления" назначений по конкретной машине/водителю
+    // Если у вас нет такого метода — придётся реализовать что-то подобное в контексте.
+    // Назовём его условно removeAssignmentsForItem.
+    removeAssignmentsForItem, // <-- убедитесь, что этот метод есть в MachineContext
   } = useMachineContext();
 
+  // Локальное состояние выбора
+  const [selectedMachine, setSelectedMachine] = useState(null);
+  const [selectedDriver, setSelectedDriver] = useState(null);
+
+  // Справочные категории
   const categories = [
     { name: 'КМУ', machines: ['938', '169', '671', '186'] },
-    { name: 'МТЗ', machines: ['3990', '4227', '8826', '9199', '0279','4220','7751', '5393', '6245','4399','4159'] },
-    { name: 'ЭП', machines: ['3581', '3003', '1434', '1435','4978', '7229', '8766'] },
+    { name: 'МТЗ', machines: ['3990', '4227', '8826', '9199', '0279', '4220', '7751', '5393', '6245', '4399', '4159'] },
+    { name: 'ЭП', machines: ['3581', '3003', '1434', '1435', '4978', '7229', '8766'] },
     { name: 'ФП', machines: ['0366'] },
     { name: 'HY', machines: ['4977'] },
     { name: 'Кран', machines: ['Sany'] },
@@ -39,286 +47,258 @@ const NewPage = ({ route, navigation }) => {
     'Кран': ['Леша'],
   };
 
-  // Пример начальных закреплений (если нужны)
-  const initialDriverAssignments = {
+  // Карта сопоставления водителей и машин (для автоподстановки)
+  const driverToMachineMap = {
     'Курбан': '938',
     'Дима': '169',
     'Айдар': '671',
     'Фаниль': '186',
-    'Альберт': 'МТЗ-1',
-    'Фаркад': 'МТЗ-2',
-    'Рамиль': '9199',
-    'Ильмир': '8826',
-    'Рамиль': 'ЭП-2', // дублируется имя
-    'Паша': '0279',
-    'АльбертН': '5393',
-    'Ильгиз': 'ФП-2',
-    'Хайдар': 'ФП-3',
-    'Володя': 'HY-1',
-    'Ильдар': 'HY-2',
+    'Альберт': '3990',
+    'Фаркад': '4227',
+    'Рамиль': '8826',
+    'Ильдар': '9199',
+    'Ильмир': '0279',
+    'Паша': '4220',
+    'АльбертН': '7751',
+    'Хайдар': '5393',
+    'Володя': '6245',
+    'Наемный': '4399',
+    'Ильгиз': '4159',
+    'Каниф': '3581',
     'Эдик': '3003',
-    'Нафис': 'Кран-1',
-    'Ильнур': 'Кран-2',
-    'Нияз': 'Кран-3',
+    'Нафис': '1434',
+    'Ильнур': '1435',
+    'Нияз': '4978',
+    'Айнур': '7229',
+    'Эрик': '8766',
+    'Умид': '0366',
+    'Гера': '4977',
     'Леша': 'Sany',
   };
 
-  const [drivers, setDrivers] = useState(Object.values(driversByCategory).flat());
-  const [selectedMachine, setSelectedMachine] = useState(null);
-  const [selectedDriver, setSelectedDriver] = useState(null);
-  const [driverAssignments, setDriverAssignments] = useState(initialDriverAssignments);
+  // Достаем назначения для текущей даты и организации
+  const orgAssignments = assignments[selectedDate]?.[selectedOrg] || [];
 
-  useEffect(() => {
-    // Инициализируем selectedItems для текущей организации, если не инициализировано
-    if (!selectedItems[selectedOrg]) {
-      setSelectedItems((prev) => ({
-        ...prev,
-        [selectedOrg]: { machines: [], drivers: [] },
-      }));
+  // 1) Функция проверки, что элемент (машина/водитель) назначен в ЭТУ организацию
+  // NEW
+  const isAssignedToThisOrg = (item, type) => {
+    if (!selectedDate) return false;
+    // Смотрим в orgAssignments
+    if (type === 'machines') {
+      return orgAssignments.some((asmt) => asmt.machine === item);
+    } else {
+      return orgAssignments.some((asmt) => asmt.driver === item);
     }
-  }, [selectedOrg]);
+  };
 
-  // Проверяем, не занят ли этот item в другой организации
+  // 2) Функция для проверки занятости в ДРУГИХ организациях
+  // (как у вас было, но теперь явно указываем, что org !== selectedOrg)
   const isUnavailable = (item, type) => {
-    return Object.entries(assignments).some(([orgName, orgAssignments]) =>
-      orgName !== selectedOrg &&
-      orgAssignments.some((assignment) => assignment[type.slice(0, -1)] === item)
+    if (!selectedDate) return false; // без даты ничего не блокируем
+    const dayData = assignments[selectedDate] || {};
+    return Object.entries(dayData).some(([org, arr]) =>
+      // если org !== текущая организация — значит занято в другом месте
+      org !== selectedOrg &&
+      arr.some((asmt) => (type === 'machines' ? asmt.machine === item : asmt.driver === item))
     );
   };
 
-  // Проверяем, выбраны ли ранее (в этой же организации)
-  const isPreviouslySelected = (item, type) => {
-    if (!selectedItems[selectedOrg]) return false;
-    return selectedItems[selectedOrg][type]?.includes(item);
+  // 3) Логика нажатия на элемент
+  //    Если элемент уже назначен в текущую организацию -> предлагаем удалить.
+  //    Иначе — работаем с локальным выбором (старый код).
+  // NEW / CHANGE
+  const handlePressItem = (item, type) => {
+    if (!selectedDate) {
+      Alert.alert('Ошибка', 'Сначала выберите дату на предыдущем экране!');
+      return;
+    }
+
+    // Проверим, назначен ли этот item (машина/водитель) именно в эту организацию
+    if (isAssignedToThisOrg(item, type)) {
+      // Спрашиваем, действительно ли удалить
+      Alert.alert(
+        'Отмена назначения',
+        `Убрать «${item}» из назначений?`,
+        [
+          { text: 'Нет', style: 'cancel' },
+          {
+            text: 'Да',
+            onPress: () => {
+              // Удаляем все назначения, связанные с этим item (в рамках текущей org)
+              removeAssignmentsForItem(selectedOrg, item, type, selectedDate);
+            },
+          },
+        ]
+      );
+    } else {
+      // Иначе — это логика выбора (как у вас и было)
+      if (type === 'machines') {
+        // Если техника уже выбрана, снимаем выбор
+        setSelectedMachine((old) => (old === item ? null : item));
+      } else {
+        // Если водитель уже выбран, снимаем выбор
+        setSelectedDriver((old) => (old === item ? null : item));
+      }
+    }
   };
 
-  // Кнопка «Назначить»
+  // Автовыбор машины при выборе водителя
+  useEffect(() => {
+    if (selectedDriver) {
+      const autoSelectedMachine = driverToMachineMap[selectedDriver];
+      if (autoSelectedMachine) {
+        setSelectedMachine(autoSelectedMachine);
+      } else {
+        setSelectedMachine(null);
+      }
+    } else {
+      setSelectedMachine(null);
+    }
+  }, [selectedDriver]);
+
+  // Кнопка "Назначить"
   const handleAssign = () => {
-    if (!selectedOrg || !selectedMachine || !selectedDriver) return;
+    if (!selectedDate) {
+      Alert.alert('Ошибка', 'Сначала выберите дату на предыдущем экране!');
+      return;
+    }
+    if (!selectedMachine || !selectedDriver) {
+      Alert.alert('Ошибка', 'Пожалуйста, выберите машину и водителя!');
+      return;
+    }
 
-    // Сохраняем выбор в selectedItems (чтобы показать «зелёным»)
-    setSelectedItems((prev) => ({
-      ...prev,
-      [selectedOrg]: {
-        machines: [
-          ...new Set([...(prev[selectedOrg]?.machines || []), selectedMachine]),
-        ],
-        drivers: [
-          ...new Set([...(prev[selectedOrg]?.drivers || []), selectedDriver]),
-        ],
-      },
-    }));
-
-    // Фиксируем в assignments
-    assignMachine(selectedOrg, selectedMachine, selectedDriver);
-
-    // (По желанию) сразу перейти на экран Assignments
-    // navigation.navigate('Assignments', { selectedOrg });
-
-    // Сбросить локальный выбор
+    assignMachine(selectedOrg, selectedMachine, selectedDriver, selectedDate);
     setSelectedMachine(null);
     setSelectedDriver(null);
+
+    Alert.alert('Успех', 'Назначение успешно добавлено!');
   };
 
-  // Отмена выбора
-  const handleCancel = (item, type) => {
-    Alert.alert(
-      'Отмена выбора',
-      `Хотите убрать «${item}» из списка этой организации?`,
-      [
-        { text: 'Нет', style: 'cancel' },
-        {
-          text: 'Да, убрать',
-          style: 'destructive',
-          onPress: () => {
-            setSelectedItems((prev) => ({
-              ...prev,
-              [selectedOrg]: {
-                ...prev[selectedOrg],
-                [type]: prev[selectedOrg][type].filter(
-                  (saved) => saved !== item
-                ),
-              },
-            }));
+  // Рендер элемента машины
+  const renderMachine = (machine) => {
+    const unavailable = isUnavailable(machine, 'machines');   // занята в другой org
+    const assignedHere = isAssignedToThisOrg(machine, 'machines'); // назначена именно в эту org
+    const isSelected = selectedMachine === machine && !assignedHere;
 
-            // Удаляем из assignments
-            if (type === 'machines') {
-              const driver = selectedItems[selectedOrg].drivers.find((driver) =>
-                assignments[selectedOrg]?.some(
-                  (assignment) => assignment.machine === item && assignment.driver === driver
-                )
-              );
-              if (driver) {
-                setAssignments((prev) => ({
-                  ...prev,
-                  [selectedOrg]: prev[selectedOrg].filter(
-                    (assignment) => !(assignment.machine === item && assignment.driver === driver)
-                  ),
-                }));
-                setSelectedItems((prev) => ({
-                  ...prev,
-                  [selectedOrg]: {
-                    ...prev[selectedOrg],
-                    drivers: prev[selectedOrg].drivers.filter((d) => d !== driver),
-                  },
-                }));
-              }
+    // Приоритет цвета:
+    // 1) если unavailable -> серый
+    // 2) если assignedHere -> зелёный (т.к. уже назначена в эту орг)
+    // 3) если isSelected -> зелёный (т.к. локально выбираем для назначения)
+    // 4) иначе -> обычный
+    let iconColor = '#555';
+    if (unavailable) {
+      iconColor = '#ccc';
+    } else if (assignedHere || isSelected) {
+      iconColor = '#28a745'; // зелёный
+    }
+
+    // Аналогично стили текста
+    let textStyles = [styles.itemText];
+    if (unavailable) {
+      textStyles.push(styles.unavailableText);
+    } else if (assignedHere || isSelected) {
+      textStyles.push(styles.selectedText); // зелёный жирный
+    }
+
+    return (
+      <View key={machine} style={styles.gridItem}>
+        <IconButton
+          icon="truck"
+          color={iconColor}
+          size={20}
+          onPress={() => {
+            if (!unavailable) {
+              handlePressItem(machine, 'machines');
             }
-            if (type === 'drivers') {
-              const machine = selectedItems[selectedOrg].machines.find((machine) =>
-                assignments[selectedOrg]?.some(
-                  (assignment) => assignment.driver === item && assignment.machine === machine
-                )
-              );
-              if (machine) {
-                setAssignments((prev) => ({
-                  ...prev,
-                  [selectedOrg]: prev[selectedOrg].filter(
-                    (assignment) => !(assignment.driver === item && assignment.machine === machine)
-                  ),
-                }));
-                setSelectedItems((prev) => ({
-                  ...prev,
-                  [selectedOrg]: {
-                    ...prev[selectedOrg],
-                    machines: prev[selectedOrg].machines.filter((m) => m !== machine),
-                  },
-                }));
-              }
-            }
-          },
-        },
-      ]
+          }}
+        />
+        <Text style={textStyles}>{machine}</Text>
+      </View>
     );
   };
 
-  // Обработка нажатия на конкретную машину или водителя
-  const handlePressItem = (item, type) => {
-    const unavailable = isUnavailable(item, type);
-    const previouslySel = isPreviouslySelected(item, type);
+  // Рендер элемента водителя
+  const renderDriver = (driver) => {
+    const unavailable = isUnavailable(driver, 'drivers');
+    const assignedHere = isAssignedToThisOrg(driver, 'drivers');
+    const isSelected = selectedDriver === driver && !assignedHere;
 
-    // Если уже выбран — предлагаем «отменить»
-    if (previouslySel) {
-      handleCancel(item, type);
-      return;
-    }
-    // Если занято в другой организации
+    let iconColor = '#555';
     if (unavailable) {
-      return;
+      iconColor = '#ccc';
+    } else if (assignedHere || isSelected) {
+      iconColor = '#28a745';
     }
 
-    // Выбираем/снимаем выбор
-    if (type === 'machines') {
-      setSelectedMachine((old) => (old === item ? null : item));
-    } else {
-      setSelectedDriver((old) => {
-        const newDriver = old === item ? null : item;
-        // Если водителю по умолчанию прописана машина
-        if (newDriver && driverAssignments[newDriver]) {
-          setSelectedMachine(driverAssignments[newDriver]);
-        }
-        return newDriver;
-      });
+    let textStyles = [styles.itemText];
+    if (unavailable) {
+      textStyles.push(styles.unavailableText);
+    } else if (assignedHere || isSelected) {
+      textStyles.push(styles.selectedText);
     }
-  };
 
-  // Рендерим сетку (машины или водители)
-  const renderGridItem = (data, selectedItem, type, icon) => {
     return (
-      <FlatList
-        data={data}
-        keyExtractor={(item) => item}
-        numColumns={2}
-        columnWrapperStyle={styles.columnWrapper}
-        contentContainerStyle={styles.gridContainer}
-        renderItem={({ item }) => {
-          const unavailable = isUnavailable(item, type);
-          const prevSel = isPreviouslySelected(item, type);
-          const isSelected = selectedItem === item;
-
-          return (
-            <View style={styles.gridItem}>
-              <IconButton
-                icon={icon}
-                color={
-                  unavailable
-                    ? '#ccc'
-                    : prevSel
-                    ? '#28a745'    // уже закреплён
-                    : isSelected
-                    ? '#007BFF'   // только что выбран
-                    : '#555'
-                }
-                size={20}
-                onPress={() => handlePressItem(item, type)}
-              />
-              <Text
-                style={[
-                  styles.itemText,
-                  unavailable && styles.unavailableText,
-                  prevSel && styles.previouslySelectedText,
-                  isSelected && styles.selectedText,
-                ]}
-              >
-                {item}
-              </Text>
-            </View>
-          );
-        }}
-      />
+      <View key={driver} style={styles.gridItem}>
+        <IconButton
+          icon="account"
+          color={iconColor}
+          size={20}
+          onPress={() => {
+            if (!unavailable) {
+              handlePressItem(driver, 'drivers');
+            }
+          }}
+        />
+        <Text style={textStyles}>{driver}</Text>
+      </View>
     );
   };
 
   return (
     <View style={styles.container}>
-      <FlatList
-        style={styles.scrollView}
-        data={[1]} // заглушка, чтобы FlatList отрендерился
-        keyExtractor={(item) => item.toString()}
-        renderItem={() => (
-          <View style={styles.content}>
-            {/* Блок «Рабочие единицы» (машины) */}
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Рабочие единицы</Text>
-              {categories.map(({ name, machines }) => (
-                <View key={name} style={styles.categoryBlock}>
-                  <Text style={styles.categoryLabel}>{name}</Text>
-                  {renderGridItem(machines, selectedMachine, 'machines', 'hammer')}
-                </View>
-              ))}
-            </View>
+      <ScrollView contentContainerStyle={styles.scrollViewContent}>
+        <Text style={styles.headerInfo}>
+          Дата: {selectedDate || 'не выбрана'} {'\n'}
+          Организация: {selectedOrg}
+        </Text>
 
-            {/* Блок «Персонал» (водители) */}
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Персонал</Text>
-              {Object.entries(driversByCategory).map(([category, drivers]) => (
-                <View key={category} style={styles.categoryBlock}>
-                  <Text style={styles.categoryLabel}>{category}</Text>
-                  {renderGridItem(drivers, selectedDriver, 'drivers', 'account')}
+        <View style={styles.columnsContainer}>
+          {/* Колонка для Техники */}
+          <View style={styles.column}>
+            <Text style={styles.columnTitle}>Техника</Text>
+            {categories.map((category) => (
+              <View key={category.name} style={styles.categoryBlock}>
+                <Text style={styles.categoryLabel}>{category.name}</Text>
+                <View style={styles.itemsContainer}>
+                  {category.machines.map((machine) => renderMachine(machine))}
                 </View>
-              ))}
-            </View>
+              </View>
+            ))}
           </View>
-        )}
-      />
 
-      {/* Вместо footer делаем собственный "бар" внизу */}
+          {/* Колонка для Водителей */}
+          <View style={styles.column}>
+            <Text style={styles.columnTitle}>Водители</Text>
+            {Object.entries(driversByCategory).map(([categoryName, drivers]) => (
+              <View key={categoryName} style={styles.categoryBlock}>
+                <Text style={styles.categoryLabel}>{categoryName}</Text>
+                <View style={styles.itemsContainer}>
+                  {drivers.map((driver) => renderDriver(driver))}
+                </View>
+              </View>
+            ))}
+          </View>
+        </View>
+      </ScrollView>
+
+      {/* Нижняя панель с кнопками */}
       <View style={styles.bottomBar}>
-        {/* Кнопка «Назначить» */}
         <Button
           mode="contained"
-          disabled={!selectedMachine || !selectedDriver}
           onPress={handleAssign}
+          disabled={!selectedMachine || !selectedDriver}
         >
           Назначить
-        </Button>
-
-        {/* Кнопка «Отправить» → переходим на Assignments */}
-        <Button
-          mode="contained"
-          onPress={() => navigation.navigate('Assignments')}
-        >
-          Отправить
         </Button>
       </View>
     </View>
@@ -332,27 +312,26 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f5f5f5',
   },
-  scrollView: {
-    flex: 1,
+  scrollViewContent: {
     padding: 16,
+    paddingBottom: 100, // Чтобы контент не скрывался под нижней панелью
   },
-  content: {
+  headerInfo: {
+    textAlign: 'center',
+    marginBottom: 16,
+    color: '#555',
+    fontSize: 16,
+  },
+  columnsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    flexWrap: 'wrap',
-    // чтобы блоки «Рабочие единицы» и «Персонал» были рядом
   },
-  section: {
-    flex: 0.48,
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    elevation: 2,
-    marginBottom: 10,
+  column: {
+    flex: 1,
+    marginHorizontal: 8,
   },
-  sectionTitle: {
-    fontSize: 16,
+  columnTitle: {
+    fontSize: 18,
     fontWeight: 'bold',
     marginBottom: 10,
     textAlign: 'center',
@@ -364,25 +343,23 @@ const styles = StyleSheet.create({
   categoryLabel: {
     fontSize: 14,
     fontWeight: 'bold',
-    marginVertical: 10,
+    marginBottom: 8,
     textAlign: 'center',
     color: '#007BFF',
   },
-  gridContainer: {
-    paddingBottom: 8,
-  },
-  columnWrapper: {
+  itemsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
   },
   gridItem: {
-    flex: 1,
+    width: '48%', // Половина ширины колонки с небольшим отступом
     alignItems: 'center',
-    justifyContent: 'center',
-    marginVertical: 6,
+    marginBottom: 10,
     backgroundColor: '#fafafa',
     borderRadius: 6,
     paddingVertical: 8,
-    marginHorizontal: 4,
+    paddingHorizontal: 4,
   },
   itemText: {
     fontSize: 14,
@@ -392,32 +369,24 @@ const styles = StyleSheet.create({
   unavailableText: {
     color: '#ccc',
   },
-  previouslySelectedText: {
-    fontWeight: 'bold',
-    color: '#28a745',
-  },
   selectedText: {
     fontWeight: 'bold',
-    color: '#007BFF',
+    color: '#28a745', // Подсветка зелёным для выбранных/назначенных элементов
   },
-
-  // ВАЖНО: стили для нашего нижнего бара
   bottomBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#fff',
-
-    // Чтобы бар был «прижат» к низу экрана:
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
+    padding: 16,
+    backgroundColor: '#fff',
 
     // если надо тень или бордер
     elevation: 4,
     borderTopWidth: 1,
     borderTopColor: '#ddd',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
